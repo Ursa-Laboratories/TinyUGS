@@ -706,6 +706,7 @@ class GRBLSession:
         self.timeout = timeout
         self.last_status = ""
         self.last_settings = ""
+        self.last_connect_error = ""
 
     def list_ports(self) -> list[SerialPortInfo]:
         return [
@@ -759,7 +760,9 @@ class GRBLSession:
                 self._drain_unlocked(pause=0.1)
                 self._write_and_read_unlocked(b"\r\n", pause=0.15)
                 self.last_status = self._write_and_read_unlocked(b"?", pause=0.15).strip()
+                self.last_connect_error = ""
             except Exception:
+                self.last_connect_error = f"Failed to connect to {self.serial_port}"
                 if self._serial is not None:
                     try:
                         self._serial.close()
@@ -878,6 +881,7 @@ class GRBLSession:
             "serial_port": self.serial_port,
             "baudrate": self.baudrate,
             "timeout": self.timeout,
+            "connect_error": self.last_connect_error,
             "available_ports": [port.__dict__ for port in self.list_ports()],
             "raw_status": self.last_status,
             "status": status,
@@ -1022,8 +1026,6 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     session = GRBLSession(args.serial_port, args.baudrate, args.timeout)
-    if args.auto_connect:
-        session.connect(args.serial_port, args.baudrate, args.timeout)
 
     try:
         server = ThreadingHTTPServer((args.host, args.web_port), RequestHandler)
@@ -1034,6 +1036,16 @@ def main() -> int:
     server.session = session  # type: ignore[attr-defined]
     print(f"Tiny UGS listening on http://{args.host}:{args.web_port}")
     print("Use ssh -L to forward this port to your local machine.")
+
+    if args.auto_connect:
+        try:
+            session.connect(args.serial_port, args.baudrate, args.timeout)
+            print(f"Auto-connect succeeded on {args.serial_port}.")
+        except Exception as exc:
+            session.last_connect_error = str(exc)
+            print(f"Auto-connect failed: {exc}")
+            print("UI still started. Open the page and connect manually after recovery.")
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:

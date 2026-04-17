@@ -22,6 +22,12 @@ source venv/bin/activate
 python tiny_ugs.py --serial-port /dev/ttyUSB0 --web-port 8765 --auto-connect
 ```
 
+If the controller is in a bad state after an E-stop, run without `--auto-connect` so the UI still loads and you can recover manually:
+
+```bash
+python tiny_ugs.py --serial-port /dev/ttyUSB0 --web-port 8765
+```
+
 On the local machine:
 
 ```bash
