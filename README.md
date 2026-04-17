@@ -37,6 +37,7 @@ http://127.0.0.1:8765
 ## Features
 
 - read GRBL settings with `$$`
+- change GRBL settings from the UI with a generic `$<n>=<value>` editor
 - view raw `WPos`, `MPos`, and `WCO`
 - connect and disconnect
 - home, unlock, reset + unlock

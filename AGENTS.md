@@ -9,7 +9,7 @@ It is intentionally closer to UGS than to Zoo:
 
 - talks directly to GRBL over serial
 - shows raw controller-space `WPos`, `MPos`, and `WCO`
-- supports connect, settings read, home, unlock, reset+unlock, hold, resume, jog, jog-cancel, and absolute move
+- supports connect, settings read/edit, home, unlock, reset+unlock, hold, resume, jog, jog-cancel, and absolute move
 
 It does **not** use CubOS coordinate translation.
 
@@ -31,6 +31,7 @@ Important:
 - install `pyserial`, not the unrelated `serial` package
 - if `import serial.tools.list_ports` fails, the environment is wrong
 - keep the HTTP server bound to `127.0.0.1` unless the user explicitly wants network exposure
+- when changing settings UI or backend behavior, preserve support for generic `$<n>=<value>` updates
 
 ## Run Workflow
 

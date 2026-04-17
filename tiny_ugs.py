@@ -168,6 +168,42 @@ HTML = """<!doctype html>
       white-space: pre-wrap;
       word-break: break-word;
     }
+    .settings-tools {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .settings-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+      max-height: 280px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+    .setting-row {
+      display: grid;
+      grid-template-columns: 100px minmax(0, 1fr) 84px;
+      gap: 8px;
+      align-items: center;
+      background: #0d141b;
+      border: 1px solid #2d445a;
+      border-radius: 12px;
+      padding: 8px;
+    }
+    .setting-key {
+      color: #c3d4e5;
+      font-size: 13px;
+    }
+    .setting-empty {
+      color: #a7bbce;
+      font-size: 12px;
+      padding: 10px;
+      background: #0d141b;
+      border: 1px solid #2d445a;
+      border-radius: 12px;
+    }
     .pill {
       display: inline-block;
       padding: 6px 10px;
@@ -286,7 +322,23 @@ HTML = """<!doctype html>
         <div class="row">
           <button class="primary" id="settings-btn">Read $$</button>
         </div>
+        <div class="settings-tools">
+          <label>Setting
+            <input id="setting-key" type="text" placeholder="$10">
+          </label>
+          <label>Value
+            <input id="setting-value" type="text" placeholder="0">
+          </label>
+        </div>
+        <div class="row">
+          <button id="set-setting-btn">Apply Setting</button>
+          <button id="set-wpos-btn">Set $10=0 (WPos)</button>
+          <button id="set-mpos-btn">Set $10=1 (MPos)</button>
+        </div>
         <pre id="settings-view">No settings loaded yet.</pre>
+        <div class="settings-list" id="settings-editor">
+          <div class="setting-empty">Read settings to load editable rows.</div>
+        </div>
       </section>
 
       <section class="panel">
@@ -309,6 +361,9 @@ HTML = """<!doctype html>
       wcoValue: document.getElementById("wco-value"),
       rawStatus: document.getElementById("raw-status"),
       settingsView: document.getElementById("settings-view"),
+      settingsEditor: document.getElementById("settings-editor"),
+      settingKey: document.getElementById("setting-key"),
+      settingValue: document.getElementById("setting-value"),
       activityLog: document.getElementById("activity-log"),
       wposX: document.getElementById("wpos-x"),
       wposY: document.getElementById("wpos-y"),
@@ -381,6 +436,50 @@ HTML = """<!doctype html>
         el.portInput.value = data.serial_port || data.available_ports[0].device;
       }
       renderPorts(data.available_ports);
+
+      if (data.settings) {
+        renderSettingsEditor(data.settings);
+      }
+    }
+
+    function renderSettingsEditor(settings) {
+      const entries = Object.entries(settings || {}).sort((left, right) => {
+        return Number(left[0].slice(1)) - Number(right[0].slice(1));
+      });
+      el.settingsEditor.innerHTML = "";
+
+      if (!entries.length) {
+        const empty = document.createElement("div");
+        empty.className = "setting-empty";
+        empty.textContent = "Read settings to load editable rows.";
+        el.settingsEditor.appendChild(empty);
+        return;
+      }
+
+      for (const [key, value] of entries) {
+        const row = document.createElement("div");
+        row.className = "setting-row";
+
+        const keyCell = document.createElement("div");
+        keyCell.className = "setting-key";
+        keyCell.textContent = key;
+
+        const input = document.createElement("input");
+        input.type = "text";
+        input.value = value;
+        input.dataset.settingKey = key;
+
+        const button = document.createElement("button");
+        button.textContent = "Apply";
+        button.addEventListener("click", () => {
+          setSetting(key, input.value).catch(error => log(error.message));
+        });
+
+        row.appendChild(keyCell);
+        row.appendChild(input);
+        row.appendChild(button);
+        el.settingsEditor.appendChild(row);
+      }
     }
 
     async function refreshState() {
@@ -400,6 +499,31 @@ HTML = """<!doctype html>
       } catch (error) {
         log(`Settings read failed: ${error.message}`);
       }
+    }
+
+    async function setSetting(key, value) {
+      const trimmedKey = String(key || "").trim();
+      const trimmedValue = String(value || "").trim();
+      if (!trimmedKey) {
+        log("Enter a GRBL setting key like $10.");
+        return;
+      }
+      if (trimmedValue === "") {
+        log("Enter a GRBL setting value.");
+        return;
+      }
+      const data = await api("/api/set-setting", {
+        method: "POST",
+        body: JSON.stringify({ key: trimmedKey, value: trimmedValue }),
+      });
+      if (data.snapshot) renderState(data.snapshot);
+      if (data.settings_raw) {
+        el.settingsView.textContent = data.settings_raw;
+      }
+      el.settingKey.value = trimmedKey;
+      el.settingValue.value = trimmedValue;
+      log(`Applied ${trimmedKey}=${trimmedValue}`);
+      if (data.response) log(data.response.trim());
     }
 
     async function post(path, body, successText) {
@@ -460,6 +584,9 @@ HTML = """<!doctype html>
     document.getElementById("disconnect-btn").addEventListener("click", () => post("/api/disconnect", {}, "Disconnected.").catch(e => log(e.message)));
     document.getElementById("refresh-state-btn").addEventListener("click", refreshState);
     document.getElementById("settings-btn").addEventListener("click", refreshSettings);
+    document.getElementById("set-setting-btn").addEventListener("click", () => setSetting(el.settingKey.value, el.settingValue.value).catch(e => log(e.message)));
+    document.getElementById("set-wpos-btn").addEventListener("click", () => setSetting("$10", "0").catch(e => log(e.message)));
+    document.getElementById("set-mpos-btn").addEventListener("click", () => setSetting("$10", "1").catch(e => log(e.message)));
     document.getElementById("home-btn").addEventListener("click", () => post("/api/home", {}, "Sent home command.").catch(e => log(e.message)));
     document.getElementById("unlock-btn").addEventListener("click", () => post("/api/unlock", {}, "Sent unlock command.").catch(e => log(e.message)));
     document.getElementById("reset-unlock-btn").addEventListener("click", () => post("/api/reset-unlock", {}, "Sent reset + unlock.").catch(e => log(e.message)));
@@ -535,9 +662,9 @@ def parse_status(raw_status: str) -> dict[str, Any]:
     wco = parse_triplet(WCO_PATTERN, text)
 
     if wpos is None and mpos is not None and wco is not None:
-      wpos = subtract_triplets(mpos, wco)
+        wpos = subtract_triplets(mpos, wco)
     if mpos is None and wpos is not None and wco is not None:
-      mpos = add_triplets(wpos, wco)
+        mpos = add_triplets(wpos, wco)
 
     reported_frame = None
     if "WPos:" in text:
@@ -561,6 +688,13 @@ def parse_settings(raw_settings: str) -> dict[str, str]:
             key, value = line.split("=", 1)
             settings[key.strip()] = value.strip()
     return settings
+
+
+def validate_setting_key(key: str) -> str:
+    cleaned = key.strip()
+    if not re.fullmatch(r"\$\d+", cleaned):
+        raise RuntimeError("GRBL setting keys must look like $10 or $132")
+    return cleaned
 
 
 class GRBLSession:
@@ -661,6 +795,22 @@ class GRBLSession:
         with self._lock:
             self.last_settings = self._write_and_read_unlocked(b"$$\n", pause=0.5).strip()
             return self.last_settings
+
+    def set_setting(self, key: str, value: str) -> tuple[str, str]:
+        setting_key = validate_setting_key(key)
+        setting_value = value.strip()
+        if setting_value == "":
+            raise RuntimeError("GRBL setting value cannot be empty")
+        if "\n" in setting_value or "\r" in setting_value:
+            raise RuntimeError("GRBL setting value cannot contain newlines")
+
+        with self._lock:
+            response = self._write_and_read_unlocked(
+                f"{setting_key}={setting_value}\n".encode("ascii"),
+                pause=0.25,
+            ).strip()
+            self.last_settings = self._write_and_read_unlocked(b"$$\n", pause=0.5).strip()
+            return response, self.last_settings
 
     def unlock(self) -> str:
         with self._lock:
@@ -799,6 +949,19 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/disconnect":
                 self._send_json(self.session.disconnect())
+                return
+            if self.path == "/api/set-setting":
+                response, settings_raw = self.session.set_setting(
+                    key=str(body.get("key", "")),
+                    value=str(body.get("value", "")),
+                )
+                self._send_json({
+                    "ok": True,
+                    "response": response,
+                    "settings_raw": settings_raw,
+                    "settings": parse_settings(settings_raw),
+                    "snapshot": self.session.snapshot(refresh_status=True),
+                })
                 return
             if self.path == "/api/home":
                 response = self.session.home()
