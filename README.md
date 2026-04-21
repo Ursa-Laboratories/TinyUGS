@@ -45,6 +45,7 @@ http://127.0.0.1:8765
 - read GRBL settings with `$$`
 - change GRBL settings from the UI with a generic `$<n>=<value>` editor
 - view raw `WPos`, `MPos`, and `WCO`
+- set `WPos` for X/Y/Z at the current machine location, including zero-X/Y/Z shortcuts
 - connect and disconnect
 - home, unlock, reset + unlock
 - feed hold and resume

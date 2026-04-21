@@ -42,6 +42,8 @@ except Exception as exc:  # pragma: no cover - import guard for remote hosts
 WPOS_PATTERN = re.compile(r"WPos:([\d.-]+),([\d.-]+),([\d.-]+)")
 MPOS_PATTERN = re.compile(r"MPos:([\d.-]+),([\d.-]+),([\d.-]+)")
 WCO_PATTERN = re.compile(r"WCO:([\d.-]+),([\d.-]+),([\d.-]+)")
+SERIAL_DRAIN_TIMEOUT_S = 1.5
+SERIAL_IDLE_SETTLE_S = 0.15
 
 
 HTML = """<!doctype html>
@@ -212,6 +214,13 @@ HTML = """<!doctype html>
       background: #213243;
       font-size: 12px;
     }
+    .axis-actions {
+      margin-bottom: 10px;
+    }
+    .axis-actions button {
+      flex: 1;
+      min-width: 110px;
+    }
   </style>
 </head>
 <body>
@@ -254,6 +263,24 @@ HTML = """<!doctype html>
           <div class="card"><div class="label">WPos X</div><div class="value" id="wpos-x">--</div></div>
           <div class="card"><div class="label">WPos Y</div><div class="value" id="wpos-y">--</div></div>
           <div class="card"><div class="label">WPos Z</div><div class="value" id="wpos-z">--</div></div>
+        </div>
+        <div class="row">
+          <label>Set WPos X
+            <input id="set-wpos-x" type="number" step="0.001" placeholder="leave blank to keep">
+          </label>
+          <label>Set WPos Y
+            <input id="set-wpos-y" type="number" step="0.001" placeholder="leave blank to keep">
+          </label>
+          <label>Set WPos Z
+            <input id="set-wpos-z" type="number" step="0.001" placeholder="leave blank to keep">
+          </label>
+        </div>
+        <div class="row axis-actions">
+          <button id="set-wpos-coords-btn">Set WPos</button>
+          <button id="zero-x-btn">Zero X</button>
+          <button id="zero-y-btn">Zero Y</button>
+          <button id="zero-z-btn">Zero Z</button>
+          <button id="zero-xyz-btn">Zero XYZ</button>
         </div>
 
         <div class="coords">
@@ -371,6 +398,9 @@ HTML = """<!doctype html>
       mposX: document.getElementById("mpos-x"),
       mposY: document.getElementById("mpos-y"),
       mposZ: document.getElementById("mpos-z"),
+      setWposX: document.getElementById("set-wpos-x"),
+      setWposY: document.getElementById("set-wpos-y"),
+      setWposZ: document.getElementById("set-wpos-z"),
     };
 
     function fmt(value) {
@@ -416,7 +446,7 @@ HTML = """<!doctype html>
       el.connectionPill.textContent = connected ? `Connected: ${data.serial_port}` : "Disconnected";
       el.connectionSummary.textContent = connected
         ? `Serial: ${data.serial_port} @ ${data.baudrate} baud`
-        : "No active serial connection.";
+        : (data.connect_error ? `No active serial connection. Last error: ${data.connect_error}` : "No active serial connection.");
 
       const status = data.status || {};
       const wpos = status.wpos || {};
@@ -541,6 +571,11 @@ HTML = """<!doctype html>
       return raw === "" ? null : Number(raw);
     }
 
+    function inputNumber(input) {
+      const raw = input.value.trim();
+      return raw === "" ? null : Number(raw);
+    }
+
     async function connect() {
       const body = {
         serial_port: el.portInput.value.trim(),
@@ -580,6 +615,23 @@ HTML = """<!doctype html>
       await post("/api/move", body, `Sent absolute move to X:${body.x} Y:${body.y} Z:${body.z}`);
     }
 
+    async function setWpos(body, successText) {
+      if (body.x === null && body.y === null && body.z === null) {
+        log("Enter at least one WPos axis value.");
+        return;
+      }
+      await post("/api/wpos", body, successText);
+    }
+
+    async function setWposFromInputs() {
+      const body = {
+        x: inputNumber(el.setWposX),
+        y: inputNumber(el.setWposY),
+        z: inputNumber(el.setWposZ),
+      };
+      await setWpos(body, `Set WPos to X:${body.x} Y:${body.y} Z:${body.z}`);
+    }
+
     document.getElementById("connect-btn").addEventListener("click", () => connect().catch(e => log(e.message)));
     document.getElementById("disconnect-btn").addEventListener("click", () => post("/api/disconnect", {}, "Disconnected.").catch(e => log(e.message)));
     document.getElementById("refresh-state-btn").addEventListener("click", refreshState);
@@ -594,6 +646,11 @@ HTML = """<!doctype html>
     document.getElementById("resume-btn").addEventListener("click", () => post("/api/resume", {}, "Sent resume.").catch(e => log(e.message)));
     document.getElementById("jog-cancel-btn").addEventListener("click", () => post("/api/jog-cancel", {}, "Sent jog cancel.").catch(e => log(e.message)));
     document.getElementById("move-btn").addEventListener("click", () => moveAbs().catch(e => log(e.message)));
+    document.getElementById("set-wpos-coords-btn").addEventListener("click", () => setWposFromInputs().catch(e => log(e.message)));
+    document.getElementById("zero-x-btn").addEventListener("click", () => setWpos({ x: 0, y: null, z: null }, "Zeroed WPos X.").catch(e => log(e.message)));
+    document.getElementById("zero-y-btn").addEventListener("click", () => setWpos({ x: null, y: 0, z: null }, "Zeroed WPos Y.").catch(e => log(e.message)));
+    document.getElementById("zero-z-btn").addEventListener("click", () => setWpos({ x: null, y: null, z: 0 }, "Zeroed WPos Z.").catch(e => log(e.message)));
+    document.getElementById("zero-xyz-btn").addEventListener("click", () => setWpos({ x: 0, y: 0, z: 0 }, "Zeroed WPos X/Y/Z.").catch(e => log(e.message)));
 
     document.querySelectorAll("[data-jog]").forEach(button => {
       button.addEventListener("click", () => {
@@ -697,6 +754,17 @@ def validate_setting_key(key: str) -> str:
     return cleaned
 
 
+def format_axis_words(x: float | None, y: float | None, z: float | None) -> list[str]:
+    axes: list[str] = []
+    if x is not None:
+        axes.append(f"X{x:.3f}")
+    if y is not None:
+        axes.append(f"Y{y:.3f}")
+    if z is not None:
+        axes.append(f"Z{z:.3f}")
+    return axes
+
+
 class GRBLSession:
     def __init__(self, serial_port: str | None, baudrate: int, timeout: float) -> None:
         self._lock = threading.Lock()
@@ -719,13 +787,24 @@ class GRBLSession:
 
     def _drain_unlocked(self, pause: float = 0.2) -> str:
         assert self._serial is not None
-        time.sleep(pause)
+        time.sleep(min(pause, SERIAL_DRAIN_TIMEOUT_S))
         chunks: list[bytes] = []
-        while True:
+        deadline = time.monotonic() + SERIAL_DRAIN_TIMEOUT_S
+        idle_since: float | None = None
+
+        while time.monotonic() < deadline:
             waiting = self._serial.in_waiting
-            if waiting <= 0:
+            if waiting > 0:
+                idle_since = None
+                chunks.append(self._serial.read(waiting))
+                time.sleep(0.05)
+                continue
+
+            now = time.monotonic()
+            if idle_since is None:
+                idle_since = now
+            if now - idle_since >= SERIAL_IDLE_SETTLE_S:
                 break
-            chunks.append(self._serial.read(waiting))
             time.sleep(0.05)
         return b"".join(chunks).decode("ascii", errors="replace")
 
@@ -755,21 +834,26 @@ class GRBLSession:
                     port=self.serial_port,
                     baudrate=self.baudrate,
                     timeout=self.timeout,
+                    write_timeout=self.timeout,
                 )
                 time.sleep(2.0)
                 self._drain_unlocked(pause=0.1)
                 self._write_and_read_unlocked(b"\r\n", pause=0.15)
                 self.last_status = self._write_and_read_unlocked(b"?", pause=0.15).strip()
                 self.last_connect_error = ""
-            except Exception:
-                self.last_connect_error = f"Failed to connect to {self.serial_port}"
+            except Exception as exc:
+                self.last_connect_error = (
+                    f"Failed to connect to {self.serial_port}: {exc}. "
+                    "Check for a stale tiny_ugs/grbl_recover process, a changed /dev/ttyUSB* path, "
+                    "or a controller still recovering from E-stop."
+                )
                 if self._serial is not None:
                     try:
                         self._serial.close()
                     except Exception:
                         pass
                 self._serial = None
-                raise
+                raise RuntimeError(self.last_connect_error) from exc
         return self.snapshot(refresh_status=False)
 
     def disconnect_unlocked(self) -> None:
@@ -784,6 +868,7 @@ class GRBLSession:
         with self._lock:
             self.disconnect_unlocked()
             self.last_status = ""
+            self.last_connect_error = ""
         return self.snapshot(refresh_status=False)
 
     def query_status(self) -> str:
@@ -851,18 +936,23 @@ class GRBLSession:
     def move_absolute(self, x: float | None, y: float | None, z: float | None, feed_rate: float) -> str:
         if x is None and y is None and z is None:
             raise RuntimeError("Absolute move must include at least one axis")
-        axes: list[str] = []
-        if x is not None:
-            axes.append(f"X{x:.3f}")
-        if y is not None:
-            axes.append(f"Y{y:.3f}")
-        if z is not None:
-            axes.append(f"Z{z:.3f}")
+        axes = format_axis_words(x, y, z)
         with self._lock:
             responses = [
                 self._write_and_read_unlocked(b"G21\n", pause=0.05).strip(),
                 self._write_and_read_unlocked(b"G90\n", pause=0.05).strip(),
                 self._write_and_read_unlocked(f"G1 {' '.join(axes)} F{feed_rate:.1f}\n".encode("ascii"), pause=0.1).strip(),
+            ]
+            return "\n".join(part for part in responses if part).strip()
+
+    def set_work_position(self, x: float | None, y: float | None, z: float | None) -> str:
+        if x is None and y is None and z is None:
+            raise RuntimeError("WPos update must include at least one axis")
+        axes = format_axis_words(x, y, z)
+        with self._lock:
+            responses = [
+                self._write_and_read_unlocked(b"G21\n", pause=0.05).strip(),
+                self._write_and_read_unlocked(f"G10 L20 P1 {' '.join(axes)}\n".encode("ascii"), pause=0.1).strip(),
             ]
             return "\n".join(part for part in responses if part).strip()
 
@@ -992,6 +1082,12 @@ class RequestHandler(BaseHTTPRequestHandler):
                     y=None if body.get("y") is None else float(body.get("y")),
                     z=None if body.get("z") is None else float(body.get("z")),
                     feed_rate=float(body.get("feed_rate", 2000.0)),
+                )
+            elif self.path == "/api/wpos":
+                response = self.session.set_work_position(
+                    x=None if body.get("x") is None else float(body.get("x")),
+                    y=None if body.get("y") is None else float(body.get("y")),
+                    z=None if body.get("z") is None else float(body.get("z")),
                 )
             else:
                 self._send_json({"ok": False, "error": "Not found"}, HTTPStatus.NOT_FOUND)
